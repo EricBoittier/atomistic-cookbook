@@ -1,0 +1,8 @@
+# Sibling prefix for `gmx`. CPU/nompi: the recipe runs metatomic on CPU.
+# Unpinned version: only 2026.0.mta3 is on the channel, and it wants
+# libtorch 2.13 (LAMMPS wants 2.12).
+channels:
+  - metatensor
+  - conda-forge
+dependencies:
+  - gromacs-metatomic=*=nompi_h*

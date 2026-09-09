@@ -47,13 +47,64 @@ increase system size, simulation time, and equilibration.
 # engine-specific packages are imported inside the corresponding functions below, to
 # make it clear which engine needs what.
 
+import os
+import shutil
 import subprocess
-from typing import List, Literal, Tuple
+from pathlib import Path
+from typing import Dict, List, Literal, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 from metatomic.torch import AtomisticModel, load_atomistic_model
+
+_HERE = Path(__file__).resolve().parent
+
+
+def _prefix_env(prefix: Path) -> Dict[str, str]:
+    env = os.environ.copy()
+    bindir = str(prefix / "bin")
+    libdir = str(prefix / "lib")
+    env["PATH"] = bindir + os.pathsep + env.get("PATH", "")
+    ld = env.get("LD_LIBRARY_PATH", "")
+    env["LD_LIBRARY_PATH"] = libdir + os.pathsep + ld if ld else libdir
+    env["CONDA_PREFIX"] = str(prefix)
+    return env
+
+
+def _engine_binary(
+    names: List[str], env_var: str, default_prefix: str
+) -> Tuple[str, Optional[Dict[str, str]]]:
+    """Locate a LAMMPS/GROMACS binary that may live in another conda prefix.
+
+    The ``lammps-metatomic`` and ``gromacs-metatomic`` packages currently pin
+    incompatible ``libtorch`` versions, so they cannot share the recipe's
+    Python environment. The exported metatomic model is still the common
+    neck: this process writes ``model.pt``, and the engine subprocess loads
+    it with *its* libtorch. Look in ``$ENV_VAR``, then a sibling prefix next
+    to this file, then ``PATH``.
+    """
+    prefixes = []
+    if os.environ.get(env_var):
+        prefixes.append(Path(os.environ[env_var]))
+    prefixes.append(_HERE / default_prefix)
+
+    for prefix in prefixes:
+        for name in names:
+            exe = prefix / "bin" / name
+            if os.access(exe, os.X_OK):
+                return str(exe), _prefix_env(prefix)
+
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found, None
+
+    raise FileNotFoundError(
+        f"none of {names} found in {env_var}={os.environ.get(env_var)!r}, "
+        f"{_HERE / default_prefix / 'bin'}, or PATH. "
+        f"Create the engine prefixes with bash {_HERE / 'create-engine-envs.sh'}"
+    )
 
 # %%
 #
@@ -306,6 +357,10 @@ def run_ase(
 # loads the exported model directly in the input file. The ``pair_coeff`` line maps
 # LAMMPS atom types to atomic numbers, and the rest is a completely standard LAMMPS
 # input.
+#
+# That conda package currently pins a different ``libtorch`` than
+# ``gromacs-metatomic``, so ``lmp`` is resolved from a sibling prefix (see
+# ``_engine_binary``) rather than from this Python environment.
 
 
 def run_lammps(
@@ -359,10 +414,16 @@ fix 2 all print 1 "$(time) $(pe)" file lammps.out screen no
 run 100
 """)
 
+    lmp, lmp_env = _engine_binary(
+        ["lmp", "lmp_serial", "lmp_mpi"],
+        "HOURGLASS_LAMMPS_PREFIX",
+        ".hourglass-env-lammps",
+    )
     subprocess.run(
-        ["lmp", "-in", "lammps.in", "-log", "none"],
+        [lmp, "-in", "lammps.in", "-log", "none"],
         check=True,
         stdout=subprocess.DEVNULL,
+        env=lmp_env,
     )
 
     time_ps, pe = np.loadtxt("lammps.out", skiprows=1, unpack=True)
@@ -377,7 +438,8 @@ run 100
 # The ``gromacs-metatomic`` build of GROMACS adds a few ``metatomic-*`` keys to the
 # ``.mdp`` parameter file, selecting the model file and the index group of atoms it
 # applies to. The topology only provides masses, through inert atom types with no
-# classical interactions, so that all forces come from the model.
+# classical interactions, so that all forces come from the model. Like LAMMPS, the
+# ``gmx`` binary is resolved from a sibling conda prefix.
 #
 # GROMACS' default integrator is leap-frog, which stores velocities half a step behind
 # the positions: starting it "at rest" means :math:`v(-\\Delta t/2) = 0` rather than
@@ -388,14 +450,16 @@ run 100
 def run_gromacs(
     model: AtomisticModel, ensemble: Literal["nve", "nvt"]
 ) -> Tuple[List[float], List[float]]:
-    import shutil
-
     import ase.io
     import ase.units
     import numpy as np
 
     model.save("model.pt")
-    gmx = shutil.which("gmx_mpi") or shutil.which("gmx")
+    gmx, gmx_env = _engine_binary(
+        ["gmx", "gmx_mpi"],
+        "HOURGLASS_GROMACS_PREFIX",
+        ".hourglass-env-gromacs",
+    )
 
     # write a .gro coordinate file with the same geometry as ethanol.xyz,
     # with the atoms reordered to match the topology in data/topol.top
@@ -446,16 +510,29 @@ nstenergy = 1
 nstlog = 100
 """)
 
-    for command in [
-        f"{gmx} grompp -f grompp.mdp -c ethanol.gro -p data/topol.top "
-        "-n data/index.ndx -o run.tpr",
-        f"{gmx} mdrun -deffnm run",
+    for args in [
+        [
+            gmx,
+            "grompp",
+            "-f",
+            "grompp.mdp",
+            "-c",
+            "ethanol.gro",
+            "-p",
+            "data/topol.top",
+            "-n",
+            "data/index.ndx",
+            "-o",
+            "run.tpr",
+        ],
+        [gmx, "mdrun", "-deffnm", "run"],
     ]:
         subprocess.run(
-            command.split(),
+            args,
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=gmx_env,
         )
 
     # extract the potential energy from the .edr file
@@ -466,6 +543,7 @@ nstlog = 100
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=gmx_env,
     )
     data = np.loadtxt("energy.xvg", comments=["@", "#"])
 

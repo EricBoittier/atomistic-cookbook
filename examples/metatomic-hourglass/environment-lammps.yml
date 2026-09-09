@@ -1,0 +1,6 @@
+# Sibling prefix for `lmp`. CPU/nompi: the recipe runs metatomic on CPU.
+channels:
+  - metatensor
+  - conda-forge
+dependencies:
+  - lammps-metatomic=2026.07.04.mta1=*cpu*nompi*
