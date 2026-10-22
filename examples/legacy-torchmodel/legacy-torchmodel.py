@@ -9,11 +9,11 @@ stress with the legacy ASE engine. No trained-model download is needed.
 
 .. warning::
 
-    This recipe uses unreleased APIs. Its environment pins the wrapper branch;
-    see the `wrapper PR
-    <https://github.com/metatensor/metatomic/pull/360>`_ and the `TorchModel proposal
-    <https://github.com/metatensor/metatomic/pull/354>`_. Until core's gradient
-    unit conversion is fixed, use matching input and model length units.
+    This recipe uses unreleased APIs. Its environment pins the wrapper branch
+    (see the `wrapper PR <https://github.com/metatensor/metatomic/pull/360>`_),
+    built on the ``metatomic-core`` branch where ``TorchModel`` lives. Until
+    core's gradient unit conversion is fixed, use matching input and model
+    length units.
 
 The original model keeps its TorchScript implementation. The wrapper converts
 containers while preserving the tensor autograd graph, allowing TorchModel to
