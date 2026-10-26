@@ -17,5 +17,5 @@ dependencies:
     - metatensor-torch>=0.10,<0.11
     # One checkout keeps the development packages' sibling paths consistent.
     # Separate Git URLs for core/torch/ase cause pip source conflicts.
-    - "metatomic[torch,ase] @ git+https://github.com/EricBoittier/metatomic.git@fc9d79e9d9cf596f021c64254aedff4558b60d2a"
+    - "metatomic[torch,ase] @ git+https://github.com/EricBoittier/metatomic.git@b90d121bd880985f77a3081e420d7b266df67243"
     - "metatomic-lj-test @ git+https://github.com/metatensor/lj-test.git@a1464af694debe1314ad58881c6c82f2569e22b2"

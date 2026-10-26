@@ -9,11 +9,11 @@ stress with the legacy ASE engine. No trained-model download is needed.
 
 .. warning::
 
-    This recipe uses unreleased APIs. Its environment pins the wrapper branch;
-    see the `wrapper PR
-    <https://github.com/metatensor/metatomic/pull/360>`_ and the `TorchModel proposal
-    <https://github.com/metatensor/metatomic/pull/354>`_. Until core's gradient
-    unit conversion is fixed, use matching input and model length units.
+    This recipe uses unreleased APIs. Its environment pins the ``LegacyModel``
+    branch (see the `wrapper PR <https://github.com/metatensor/metatomic/pull/366>`_),
+    built on the ``metatomic-core`` branch where ``TorchModel`` lives. Until
+    `metatomic#369 <https://github.com/metatensor/metatomic/pull/369>`_ is merged,
+    use matching input and model length units.
 
 The original model keeps its TorchScript implementation. The wrapper converts
 containers while preserving the tensor autograd graph, allowing TorchModel to
@@ -24,7 +24,7 @@ compute energy derivatives inside the model interface.
 # Export and reload a model
 # -----------------------------
 # For an existing file, replace this section with
-# ``model = LegacyModel.load("model.pt", extensions_directory="extensions")``.
+# ``model = LegacyModel("model.pt", extensions_directory="extensions")``.
 # The extension directory is only needed when the model uses custom operators.
 
 import tempfile
@@ -32,11 +32,13 @@ from pathlib import Path
 
 import ase.build
 import matplotlib.pyplot as plt
+import metatensor
 import metatomic
 import metatomic_lj_test
 import numpy as np
+import vesin
 from metatomic_ase import MetatomicCalculator
-from metatomic_torch.legacy import LegacyModel, system_with_pairs
+from metatomic_torch import LegacyModel
 
 legacy = metatomic_lj_test.lennard_jones_model(
     atomic_type=28,
@@ -50,7 +52,7 @@ legacy = metatomic_lj_test.lennard_jones_model(
 with tempfile.TemporaryDirectory() as directory:
     path = str(Path(directory) / "lj.pt")
     legacy.save(path)
-    model = LegacyModel.load(path)
+    model = LegacyModel(path)
 
 # %%
 # Build the system and request derivatives
@@ -70,21 +72,50 @@ energy_request = metatomic.Quantity(
 )
 
 
+def compute_pairs(structure, options):
+    """Compute a pair list with vesin, in the layout metatomic expects"""
+    i, j, shifts, vectors = vesin.NeighborList(
+        cutoff=options.cutoff, full_list=options.full_list
+    ).compute(
+        points=structure.positions,
+        box=structure.cell[:],
+        periodic=structure.pbc,
+        quantities="ijSD",
+    )
+    names = [
+        "first_atom",
+        "second_atom",
+        "cell_shift_a",
+        "cell_shift_b",
+        "cell_shift_c",
+    ]
+    return metatensor.TensorBlock(
+        values=vectors.reshape(-1, 3, 1),
+        samples=metatensor.Labels(
+            names, np.column_stack([i, j, shifts]).astype(np.int32)
+        ),
+        components=[metatensor.Labels.range("xyz", 3)],
+        properties=metatensor.Labels.range("distance", 1),
+    )
+
+
 def evaluate(structure, gradients=True):
     request = (
         energy_request
         if gradients
         else metatomic.Quantity(name="energy", unit="eV", sample_kind="system")
     )
-    system = system_with_pairs(
-        structure.numbers,
+    system = metatomic.System(
+        "angstrom",
+        structure.numbers.astype(np.int32),
         structure.positions,
         structure.cell[:],
         structure.pbc,
-        model.requested_pair_lists([request]),
-        length_unit="angstrom",
-        model_length_unit=model.capabilities().length_unit,
     )
+    # an engine adds the pair lists requested by the model, as it would for any
+    # metatomic model
+    for options in model.requested_pair_lists([request]):
+        system.add_pairs(options, compute_pairs(structure, options))
     (result,) = metatomic.execute_model(
         model, [system], [request], check_consistency=True
     )
