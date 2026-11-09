@@ -1,0 +1,22 @@
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  # The JAX support of metatensor-core (metatensor/metatensor#1207), metatomic-core
+  # (metatensor/metatomic#378, with JaxPairs) and vesin (Luthaf/vesin#201) is not
+  # released yet. Until it is, these packages are built from their branches, which
+  # needs Rust, CMake and a C++ compiler.
+  - rust
+  - cmake
+  - cxx-compiler
+  - pip:
+    - ase >=3.23,<4
+    - matplotlib
+    - jax[cpu] >=0.7
+    - ctypes-dlpack
+    - atomistic-cookbook-utils >=0.1,<0.2
+    - metatensor-core @ git+https://github.com/EricBoittier/metatensor@jax-arrays-upstream#subdirectory=python/metatensor_core
+    - metatensor-operations @ git+https://github.com/EricBoittier/metatensor@jax-arrays-upstream#subdirectory=python/metatensor_operations
+    - metatomic-core @ git+https://github.com/EricBoittier/metatomic@jax-traced-pairs#subdirectory=python/metatomic_core
+    - vesin-jax @ git+https://github.com/Luthaf/vesin@vesin-jax#subdirectory=python/vesin_jax
